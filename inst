@@ -1,0 +1,25 @@
+#!/bin/bash
+
+cp -rf ./centos /cloud/_base
+cp -rf ./vsm-allinone /cloud/
+cp -rf virbr* /cloud/_base/
+
+for n in 1 2 3 4; do
+    sed -i "s,%UUID$n%,`uuidgen`,g" /cloud/_base/virbr${n}.xml
+    virsh net-define /cloud/_base/virbr${n}.xml
+    virsh net-start virbr$n
+    virsh net-autostart virbr$n
+done
+
+cp -rf iptables /root/
+for n in `hostname -I`; do
+    if [[ `echo $n | grep 239 | wc -l` -gt 0 ]]; then
+        sed -i "s,10.239.82.116,$n,g" /root/iptables
+    fi
+done
+iptables-restore < /root/iptables
+
+cp -rf host_name_server /root/
+cp -rf client /cloud/
+pgrep host_name_server | xargs -i kill -9 {}
+python /root/host_name_server >/dev/null 2>&1 &

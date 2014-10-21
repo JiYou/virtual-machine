@@ -1,0 +1,30 @@
+#!/bin/bash
+
+user=$1
+groupadd $user
+useradd $user -g $user -d /home/$user -s /bin/bash
+passwd $user
+
+cat <<"EOF" >  /tmp/exp_user
+##!/usr/bin/expect -f
+
+spawn passwd %USER%
+
+expect "Enter new UNIX password:"
+send "zaq12wsx\r"
+
+expect "Retype new UNIX password:"
+send "zaq12wsx\r"
+
+expect eof
+EOF
+
+sed -i "s,%USER%,$user,g" /tmp/exp_user
+chmod +x /tmp/exp_user
+/tmp/exp_user
+
+sfile="/etc/sudoers"
+sed -i "/$user/d" /etc/sudoers
+
+echo "$user   ALL=(root) NOPASSWD: /cloud/vsm-allinone *" >> $sfile
+echo "$user   ALL=(root) NOPASSWD: /cloud/remove *" >> $sfile

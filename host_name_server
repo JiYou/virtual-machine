@@ -1,0 +1,61 @@
+#!/usr/bin/env python
+# encoding: utf-8
+#
+# Copyright (c) 2010 Doug Hellmann.  All rights reserved.
+#
+"""Server half of echo example.
+"""
+#end_pymotw_header
+
+import os
+import socket
+import sys
+import time
+
+# Create a TCP/IP socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+os.popen('iptables -I INPUT 1 -p tcp --dport 6080 -j ACCEPT')
+
+# Bind the socket to the port
+server_address = ('192.168.122.1', 10000)
+print >>sys.stderr, 'starting up on %s port %s' % server_address
+sock.bind(server_address)
+
+# Listen for incoming connections
+sock.listen(1)
+
+while True:
+    # Wait for a connection
+    print >>sys.stderr, 'waiting for a connection'
+    connection, client_address = sock.accept()
+    try:
+        print >>sys.stderr, 'connection from', client_address
+
+        # Receive the data in small chunks and retransmit it
+        while True:
+            data = connection.recv(1024)
+            if data.find('@') != -1:
+                data = data.strip()
+                if len(data) < 10:
+                    continue
+                host = data.split('@')[1]
+                os.popen("sed -i '/host/d' /root/.ssh/authorized_keys")
+                os.popen("echo %s >> /root/.ssh/authorized_keys" % data)
+                fd = open('/cloud/keys/%s.pub' % host, 'w')
+                fd.write(data)
+                fd.close()
+                continue
+            print >>sys.stderr, 'received "%s"' % data
+            if data:
+                data = data.strip()
+                name = data.split()[0].strip()
+                ip = data.split()[1].strip()
+                os.popen("sed -i '/%s/d' /etc/hosts" % ip)
+                os.popen("echo %s %s >> /etc/hosts" % (ip, name))
+            else:
+                print >>sys.stderr, 'no data from', client_address
+                break
+    finally:
+        # Clean up the connection
+        connection.close()
