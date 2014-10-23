@@ -1,0 +1,17 @@
+#!/bin/bash
+
+for n in `ls /tmp | grep tmp`; do
+    umount /tmp/$n
+done
+qemu-nbd -d /dev/nbd1
+for n in `ls /dev/mapper | grep -v control | grep -v nbd`; do
+    dmsetup clear /dev/mapper/$n
+    dmsetup remove /dev/mapper/$n
+done
+
+for n in `ls /dev/mapper | grep -v control | sort -r`; do
+    dmsetup clear /dev/mapper/$n
+    dmsetup remove /dev/mapper/$n
+done
+
+rmmod nbd
