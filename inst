@@ -23,3 +23,7 @@ cp -rf host_name_server /root/
 cp -rf client /cloud/
 pgrep host_name_server | xargs -i kill -9 {}
 python /root/host_name_server >/dev/null 2>&1 &
+
+# Prepare keys
+mkdir -p /cloud/keys/
+[[ -e ~/.ssh ]] && cp -rf ~/.ssh/*.pub /cloud/keys/
