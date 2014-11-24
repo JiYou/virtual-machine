@@ -1,0 +1,167 @@
+基于Ubuntu系统创建虚拟机开发环境
+
+/cloud目录
+
+保证/cloud/目录下有足够的空间，如果有多余的硬盘，格式化之后，挂载至此目录。
+
+网关设置脚本
+
+基本思路：虚拟机所处的网络是物理机创建出来的虚拟网络。虚拟机连接外部节点的时候，需要利用物理机为网关，所以需要设置物理机为网关。
+
+这些脚本可以至：
+
+https://github.com/JiYou/virtual-machine
+
+下载，并且放置于/root目录。
+
+
+修改IP地址
+
+如果物理机有多个IP地址，需要选择能连接至外网（公司10.239.XXX.XX）网段的IP。
+比如10.239.82.131或者10.239.82.86
+如果物理机处理公司另外一个网关内部，则选择与网关直接相联的IP，比如10.10.10.51。
+修改inst脚本代码：
+
+sed -i "s,10.239.82.94,$n,g" /root/iptables
+
+为：
+
+sed -i "s,10.10.10.51,$n,g" /root/iptables
+
+
+安装KVM以及libvirt
+
+apt-get install libvirt-bin kvm qemu-kvm bridge-utils kpartx lvm2 qemu-utils
+检查：
+
+$ kvm-ok
+
+INFO: /dev/kvm exists
+KVM acceleration can be used
+
+驱动KVM
+$ modprobe kvm
+$ modprobe kvm_intel
+
+开启libvirt
+$ service libvirt-bin restart
+$ virsh list –all
+Id Name                 State
+----------------------------------
+
+创建虚拟网络
+
+$ cd /root/hostvirbr
+$ ./inst
+
+检查虚拟网络：
+
+# virsh net-list --all
+Name                 State      Autostart
+-----------------------------------------
+virbr0               active    yes
+virbr1               active     yes       
+virbr2               active     yes       
+virbr3               active     yes       
+virbr4               active     yes  
+
+PS: 如果发现没有virbr0，那么需要手动创建。
+$ sed -i "s,%UUID0%,`uuidgen`,g" /cloud/_base/virbr0.xml
+$ virsh net-define /cloud/_base/virbr0.xml
+$ virsh net-start virbr0
+$ virsh net-autostart virbr0
+
+创建成功之后，通过ifconfig命令，也可以看到物理机上有了相应的虚拟网络：
+$ ifconfig | grep addr
+virbr0    Link encap:Ethernet  HWaddr 52:54:00:ee:d9:69  
+          inet addr:192.168.122.1  Bcast:192.168.122.255  Mask:255.255.255.0
+virbr1    Link encap:Ethernet  HWaddr 52:54:00:d4:22:b1  
+          inet addr:192.168.123.1  Bcast:192.168.123.255  Mask:255.255.255.0
+virbr2    Link encap:Ethernet  HWaddr 52:54:00:56:7a:03  
+          inet addr:192.168.124.1  Bcast:192.168.124.255  Mask:255.255.255.0
+virbr3    Link encap:Ethernet  HWaddr 52:54:00:74:49:05  
+          inet addr:192.168.125.1  Bcast:192.168.125.255  Mask:255.255.255.0
+virbr4    Link encap:Ethernet  HWaddr 52:54:00:2b:35:cb  
+          inet addr:192.168.126.1  Bcast:192.168.126.255  Mask:255.255.255.0
+
+拷贝CentOS磁盘
+
+$ scp -pr jiyou@10.239.82.94:/cloud/_base/centos-6.5.raw /cloud/_base/
+密码为zaq12wsx
+
+配置br0
+这里是将br0绑定于eth1，可以根据情况修改至eth2或者eth0.
+
+auto eth1
+iface eth1 inet manual
+
+auto br0
+iface br0 inet static
+        address 10.10.10.51
+        netmask 255.255.255.0
+        bridge_ports eth1
+        bridge_stp off
+        bridge_maxwait 0
+        bridge_fd 0
+
+修改好/etc/network/interfaces之后，运行
+/etc/init.d/networking restart重启网络。
+
+检查host_name_server
+
+在开始创建虚拟节点之前，先检查一个进程：
+$ ps aux | grep host_name_server
+root     10286  0.0  0.0  31636  6088 ?        S    16:48   0:00 python host_name_server
+root     11401  0.0  0.0   8384   968 pts/11   S+   17:06   0:00 grep --color=auto host_name
+
+如果没有这个进程，运行如下命令：
+
+python /root/host_name_server >/dev/null 2>&1 &
+
+
+创建Controller Node
+
+至/cloud/目录，运行：
+
+./vsm-controller jiyou-test-controller
+
+创建Storage Node
+
+至/cloud/目录，运行：
+
+./vsm-node jiyou-test-node-a
+
+配置IP
+
+当controller-node起来之后，通过/etc/hosts可以判断是否可以连接。如果出现了
+相应的虚拟机名字，则表示可以通过虚拟机名连接至虚拟机。
+
+在物理机上选择一个IP地址，比如：10.10.10.52
+
+$ ping 10.10.10.52
+如果无法ping通，说明这个IP地址可以分配给虚拟机中的controller-node。
+
+连接至controller-node，修改ifcfg-eth0配置文件 ：
+
+添加两行：
+
+# cat /etc/sysconfig/network-scripts/ifcfg-eth0 
+DEVICE=eth0
+BOOTPROTO="static"
+HWADDR="52:54:69:61:71:0f"
+NM_CONTROLLED="no"
+ONBOOT="yes"
+TYPE="Ethernet"
+IPV6INIT=no
+IPV6_AUTOCONF=no
+
+IPADDR=10.10.10.52
+NETMASK=255.255.254.0
+
+重启网络即可。此时controller-node即与物理机处于同一10.10.XXX网段。
+
+
+
+PS：如果是FLEX里面的物理机，IP地址可不用写成静态的，直接用DHCP就可以了。不需要改动。
+
+
