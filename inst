@@ -1,6 +1,9 @@
 #!/bin/bash
 
-cp -rf ./centos /cloud/_base
+mkdir -p /cloud/_base
+mkdir -p /cloud/keys/
+cp -rf ./centos* /cloud/_base
+cp -rf ./controller_node /cloud/_base/
 cp -rf ./vsm-allinone /cloud/
 cp -rf virbr* /cloud/_base/
 
@@ -27,3 +30,4 @@ python /root/host_name_server >/dev/null 2>&1 &
 # Prepare keys
 mkdir -p /cloud/keys/
 [[ -e ~/.ssh ]] && cp -rf ~/.ssh/*.pub /cloud/keys/
+find /home -name "*.pub" | xargs -i cp -rf {} /cloud/keys/
