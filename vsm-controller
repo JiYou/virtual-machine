@@ -1,19 +1,5 @@
 #!/bin/bash
 
-if [[ `brctl addbr br0` -eq 0 ]];then
-    if [[ `brctl addif br0 eth0` -eq 0 ]];then
-        if [[ `ifconfig eth0 0.0.0.0` -eq 0 ]];then
-            if [[ `dhclient br0` -eq 0 ]];then
-                echo "Bridge set up complete."
-            fi
-        fi
-    fi
-fi
-
-#if [[ `cp ~/.ssh/id_rsa.pub /cloud/keys/` -eq 0 ]];then
-#    echo 'copy id_rsa.pub complete.'
-#fi
-
 TOPDIR=$(cd $(dirname "$0") && pwd)
 
 cnt=`virsh list | wc -l`

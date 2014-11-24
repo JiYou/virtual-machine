@@ -21,7 +21,7 @@ set -o xtrace
 
 [[ `dpkg -l kpartx | wc -l` -eq 0 ]] && apt-get install -y --force-yes kpartx lvm2 qemu-kvm qemu-utils
 mkdir -p $1
-cp _base/centos $1/$1
+cp _base/centos_node $1/$1
 HOST_NAME=$1
 uuid=`uuidgen`
 sed -i "s,%UUID%,$uuid,g" $1/$1
