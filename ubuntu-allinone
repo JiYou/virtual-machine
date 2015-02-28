@@ -1,6 +1,7 @@
 #!/bin/bash
 
 TOPDIR=$(cd $(dirname "$0") && pwd)
+temp_file=`mktemp`; rm -rf $temp_file; mkdir -p $temp_file
 
 cnt=`virsh list | wc -l`
 if [[ $cnt -gt 19 ]]; then
@@ -31,7 +32,7 @@ machine=`qemu-system-x86_64 -M ? | grep default | awk '{print $1}'`
 sed -i "s,pc-0.14,$machine,g" $1/$1
 
 # Main disk
-qemu-img create -f qcow2 -o cluster_size=2M,backing_file=/cloud/_base/centos-6.5.raw $1/ubuntu-$1.qcow2 60G
+qemu-img create -f qcow2 -o cluster_size=2M,backing_file=/cloud/_base/ubuntu-12.04.raw $1/ubuntu-$1.qcow2 60G
 sed -i "s,%IMAGE_PATH%,/cloud/$1/ubuntu-$1.qcow2,g" $1/$1
 # Ceph disk
 for n in 0 1 2 3 4 5 6 7 8 9 10; do
@@ -39,82 +40,21 @@ for n in 0 1 2 3 4 5 6 7 8 9 10; do
     sed -i "s,%DISK${n}%,/cloud/$1/ceph-disk-$n.raw,g" $1/$1
 done
 
-modprobe nbd  max_part=63
+guestmount -a /cloud/$1/ubuntu-$1.qcow2 -i $temp_file
 
-dev_number=1
-qemu-nbd -c  /dev/nbd${dev_number} /cloud/$1/ubuntu-$1.qcow2
-sleep 3
-kpartx -a /dev/nbd${dev_number}
-sleep 1
-nbd_dev=`ls /dev/mapper | grep nbd${dev_number} | tail -1`
-temp_file=`mktemp`; rm -rf $temp_file; mkdir -p $temp_file
-
-
-# When mount close GUI directory
-echo "Generate clean mount files to recover nbd devices."
-cat <<"__EOF__"> $TOPDIR/clean
-#!/bin/bash
-if [[ `ps aux | grep nautilus | grep -v grep | awk '{print $2}'` -gt 0 ]]; then
-    ps aux | grep nautilus | grep -v grep | awk '{print $2}' | xargs -i kill -9 {}
-fi
-__EOF__
-
-# Generate clean script
-echo "umount $temp_file" > $TOPDIR/clean
-echo "qemu-nbd -d /dev/nbd${dev_number}" >> $TOPDIR/clean
-
-cat <<"__EOF__" >> $TOPDIR/clean
-for n in `ls /dev/mapper | grep -v control | grep -v nbd`; do
-    dmsetup clear /dev/mapper/$n
-    dmsetup remove /dev/mapper/$n
-done
-
-for n in `ls /dev/mapper | grep -v control | sort -r`; do
-    dmsetup clear /dev/mapper/$n
-    dmsetup remove /dev/mapper/$n
-done
-
-rmmod nbd
-__EOF__
-chmod +x $TOPDIR/clean
-
-sleep 1
-
-for root_path in `ls /dev/mapper | grep -v nbd | grep -v control`; do
-    mount /dev/mapper/$root_path $temp_file
-    if [[ `ps aux | grep nautilus | grep -v grep | awk '{print $2}'` -gt 0 ]]; then
-        ps aux | grep nautilus | grep -v grep | awk '{print $2}' | xargs -i kill -9 {}
-    fi
-    sleep 1
-    if [[ `ls $temp_file | grep root | wc -l` -gt 0 ]]; then
-        umount $temp_file
-        break;
-    fi
-    umount $temp_file
-done
-mount /dev/mapper/$root_path $temp_file
 if [[ `ps aux | grep nautilus | grep -v grep | awk '{print $2}'` -gt 0 ]]; then
     ps aux | grep nautilus | grep -v grep | awk '{print $2}' | xargs -i kill -9 {}
 fi
 
 echo $temp_file
 ls $temp_file
+
 # Change network configuration.
 #----------------------------------------------
-
-rm -rf $temp_file/etc/yum.repos.d/CentOS-c*.repo
-rm -rf $temp_file/etc/yum.repos.d/CentOS-CD*.repo
-sed -i "s,cd-all,total,g" $temp_file/etc/yum.repos.d/CentOS-ALL.repo
-sed -i "s,200,94,g" $temp_file/etc/yum.repos.d/CentOS-ALL.repo
-
-mip=`hostname -I | awk '{print $2}'`
+mip="192.168.122.1"
 sed -i "s,%MY_IP%,$mip,g" /cloud/client
 cp -rf /cloud/client $temp_file/root/
 cp -rf /cloud/keys/* $temp_file/root/
-
-echo "touch /var/lock/subsys/local" > $temp_file/etc/rc.local
-#echo "route add default gw 10.239.82.1 eth0" >> $temp_file/etc/rc.local
-echo "service iptables stop" >> $temp_file/etc/rc.local
 echo "/root/client" >>  $temp_file/etc/rc.local
 
 file=$temp_file/etc/udev/rules.d/70-persistent-net.rules
@@ -132,15 +72,18 @@ SUBSYSTEM=="net", ACTION=="add", DRIVERS=="?*", ATTR{address}=="%MAC3%", ATTR{ty
 SUBSYSTEM=="net", ACTION=="add", DRIVERS=="?*", ATTR{address}=="%MAC4%", ATTR{type}=="1", KERNEL=="eth*", NAME="eth4"
 EOF
 
-file=$temp_file/etc/selinux/config
-sed -i "s,enforcing,disabled,g" $file
-
-rm -rf $temp_file/root/.ssh/kn*
-
+mkdir -p $temp_file/root/.ssh
 for n in `find /home -name "id_rsa.pub"`; do
     cat $n >> $temp_file/root/.ssh/authorized_keys
 done
 
+
+network_file=$temp_file/etc/network/interfaces
+cat <<"eof" > $network_file
+# interfaces(5) file used by ifup(8) and ifdown(8)
+auto lo
+iface lo inet loopback
+eof
 
 for n in 0 1 2 3 4; do
     MACADDR="52:54:$(dd if=/dev/urandom count=1 2>/dev/null | md5sum | sed 's/^\(..\)\(..\)\(..\)\(..\).*$/\1:\2:\3:\4/')";
@@ -148,41 +91,21 @@ for n in 0 1 2 3 4; do
     sed -i "s,%MAC${n}%,$MACADDR,g" $temp_file/etc/udev/rules.d/70-persistent-net.rules
 
 
-iffile=$temp_file/etc/sysconfig/network-scripts/ifcfg-eth$n
-cat <<"EOF">$iffile
-DEVICE="%ETH%"
-
-BOOTPROTO="dhcp"
-BROADCAST=192.168.%LAN%.255
-NETMASK=255.255.255.0
-NETWORK=192.168.%LAN%.0
-GATEWAY=192.168.%LAN%.1
-
-HWADDR="%MAC%"
-NM_CONTROLLED="no"
-ONBOOT="yes"
-TYPE="Ethernet"
-IPV6INIT=no
-IPV6_AUTOCONF=no
+cat <<"EOF">>$network_file
+auto %ETH%
+iface %ETH% inet dhcp
+    broadcast 192.168.%LAN%.255
+    netmask 255.255.255.0
+    gateway 192.168.%LAN%.1
 EOF
-sed -i "s,%ETH%,eth$n,g" $iffile
-sed -i "s,%MAC%,$MACADDR,g" $iffile
+sed -i "s,%ETH%,eth$n,g" $network_file
 let LAN=n+2
-sed -i "s,%LAN%,12$LAN,g" $iffile
+sed -i "s,%LAN%,12$LAN,g" $network_file
 done
-
-
-# Change hostname to $1
-cat <<"EOF" > $temp_file/etc/sysconfig/network
-NETWORKING=yes
-NETWORKING_IPV6=no
-EOF
-echo "HOSTNAME=$1" >> $temp_file/etc/sysconfig/network
 
 cat <<"EOF" > $temp_file/etc/hosts
 127.0.0.1   %HOST_NAME% localhost localhost.localdomain localhost4 localhost4.localdomain4
 ::1         %HOST_NAME% localhost localhost.localdomain localhost6 localhost6.localdomain6
-10.249.66.104 aserver1
 EOF
 
 sed -i "s,%HOST_NAME%,$HOST_NAME,g"  $temp_file/etc/hosts
@@ -193,26 +116,8 @@ if [[ `ps aux | grep nautilus | grep -v grep | awk '{print $2}'` -gt 0 ]]; then
     ps aux | grep nautilus | grep -v grep | awk '{print $2}' | xargs -i kill -9 {}
 fi
 umount $temp_file
-qemu-nbd -d /dev/nbd${dev_number}
-
-for n in `ls /dev/mapper | grep -v control | grep -v nbd`; do
-    dmsetup clear /dev/mapper/$n
-    dmsetup remove /dev/mapper/$n
-done
-
-for n in `ls /dev/mapper | grep -v control | sort -r`; do
-    dmsetup clear /dev/mapper/$n
-    dmsetup remove /dev/mapper/$n
-done
-
-rmmod nbd
-
 virsh define $1/$1
 virsh start $1
-mip=10.249.66.104
-pt=`virsh vncdisplay $1`
-echo $mip:$pt
-
 
 set +o xtrace
 
